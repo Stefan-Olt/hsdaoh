@@ -627,7 +627,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 	}
 
 	if (dev->cb)
-		dev->cb(data, frame_payload_bytes, dev->cb_ctx);
+		dev->cb(data, frame_payload_bytes, meta.pack_state, dev->cb_ctx);
 
 	if (frame_errors && dev->stream_synced) {
 		fprintf(stderr,"%d idle counter errors, %d frames since last error\n", frame_errors, dev->frames_since_error);

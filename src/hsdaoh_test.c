@@ -220,7 +220,7 @@ static void ppm_test(uint32_t len)
 
 uint16_t last_value = 0;
 
-static void hsdaoh_callback(unsigned char *buf, uint32_t len, void *ctx)
+static void hsdaoh_callback(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx)
 {
 	/* verify the counter value */
 	uint16_t *cnt = (uint16_t *)buf;

@@ -77,7 +77,7 @@ static void sighandler(int signum)
 }
 #endif
 
-static void hsdaoh_callback(unsigned char *buf, uint32_t len, void *ctx)
+static void hsdaoh_callback(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx)
 {
 	if (ctx) {
 		if (do_exit)
