@@ -108,7 +108,7 @@ HSDAOH_API uint32_t hsdaoh_get_sample_rate(hsdaoh_dev_t *dev);
 
 /* streaming functions */
 
-typedef void(*hsdaoh_read_cb_t)(unsigned char *buf, uint32_t len, void *ctx);
+typedef void(*hsdaoh_read_cb_t)(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx);
 
 /*!
  * Start streaming data from the device.
