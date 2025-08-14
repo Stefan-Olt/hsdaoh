@@ -31,31 +31,19 @@
 #include <stdbool.h>
 #ifndef _WIN32
 #include <unistd.h>
-#endif
-
-#ifdef _MSC_VER
+#include <endian.h>
+#else
 #include <windows.h>
 #define usleep(t) Sleep((t)/1000)
-#else
-#include <unistd.h>
+#define le32toh(x) (x)
+#define le16toh(x) (x)
 #endif
 
 #include <inttypes.h>
 #include <libusb.h>
 #include <libuvc/libuvc.h>
-//#include <math.h>
-#include <hsdaoh_i2c.h>
 #include <hsdaoh.h>
-
-/*
- * All libusb callback functions should be marked with the LIBUSB_CALL macro
- * to ensure that they are compiled with the same calling convention as libusb.
- *
- * If the macro isn't available in older libusb versions, we simply define it.
- */
-#ifndef LIBUSB_CALL
-#define LIBUSB_CALL
-#endif
+#include <crc.h>
 
 enum hsdaoh_async_status {
 	HSDAOH_INACTIVE = 0,
@@ -82,13 +70,14 @@ struct hsdaoh_dev {
 	uvc_device_t *uvc_dev;
 	uvc_device_handle_t *uvc_devh;
 
-	uint32_t rate; /* Hz */
-
 	int hid_interface;
 
+	uint8_t edid_seq_cnt;
 	int frames_since_error;
 	int discard_start_frames;
+	unsigned int in_order_cnt;
 	uint16_t last_frame_cnt;
+	uint16_t last_crc[2];
 	uint16_t idle_cnt;
 	bool stream_synced;
 
@@ -96,7 +85,7 @@ struct hsdaoh_dev {
 
 	/* status */
 	int dev_lost;
-	int driver_active;
+	bool driver_active;
 	unsigned int xfer_errors;
 	char manufact[256];
 	char product[256];
@@ -114,11 +103,20 @@ static hsdaoh_adapter_t known_devices[] = {
 	{ 0x345f, 0x2131, "MS2131" },
 };
 
+enum crc_config {
+	CRC_NONE,		/* No CRC, just 16 bit idle counter */
+	CRC16_1_LINE,		/* Line contains CRC of the last line */
+	CRC16_2_LINE		/* Line contains CRC of the line before the last line */
+};
+
 typedef struct
 {
 	uint32_t magic;
 	uint16_t framecounter;
 	uint8_t  pack_state;
+	uint8_t  crc_config;
+	uint8_t  data_width;
+	uint8_t  data_signedness;
 } __attribute__((packed, aligned(1))) metadata_t;
 
 #define CTRL_TIMEOUT	300
@@ -174,6 +172,40 @@ int hsdaoh_read_register(hsdaoh_dev_t *dev, uint16_t addr, uint8_t *val)
 	return r;
 }
 
+/* Write a datagram to the EDID RAM to control a downstream data source */
+int hsdaoh_write_edid_cmd_data(hsdaoh_dev_t *dev, uint8_t *data, uint8_t len)
+{
+	if (!dev || !data || (len > 254))
+		return -1;
+
+	/* increment sequence counter and avoid values 0x00 and 0xff */
+	dev->edid_seq_cnt++;
+	if (!dev->edid_seq_cnt || (dev->edid_seq_cnt == 0xff))
+		dev->edid_seq_cnt = 1;
+
+	/* disable I2C access to EDID RAM, reading via I2C will result in a NAK */
+	hsdaoh_ms_write_register(dev, 0xf063, 0x00);
+
+	/* switch EDID RAM to 8051 */
+	hsdaoh_ms_write_register(dev, 0xf062, 0x80);
+
+	/* store header with sequence counter and length of data */
+	hsdaoh_ms_write_register(dev, 0xf900, dev->edid_seq_cnt);
+	hsdaoh_ms_write_register(dev, 0xf901, len);
+
+	/* store actual data to the EDID RAM */
+	for (uint8_t i = 0; i < len; i++)
+		hsdaoh_ms_write_register(dev, 0xf902 + i, data[i]);
+
+	/* switch EDID RAM to DDC I2C slave */
+	hsdaoh_ms_write_register(dev, 0xf062, 0x00);
+
+	/* re-enable I2C access to EDID RAM */
+	hsdaoh_ms_write_register(dev, 0xf063, 0x08);
+
+	return 0;
+}
+
 /* Switch the MS2130 to a transparent mode, YUYV data received via HDMI
  * will be passed through unmodified */
 void hsdaoh_ms_enable_transparent_mode(hsdaoh_dev_t *dev)
@@ -183,7 +215,8 @@ void hsdaoh_ms_enable_transparent_mode(hsdaoh_dev_t *dev)
 	 * no warranty! */
 
 	/* force YCbCr 4:2:2/YUV input, default is 0x04 (RGB) */
-	hsdaoh_ms_write_register(dev, 0xf039, 0x06);
+	hsdaoh_ms_write_register(dev, 0xf039, 0x00);
+	hsdaoh_ms_write_register(dev, 0xf030, 0x02);
 
 	/* disable sharpening */
 	hsdaoh_ms_write_register(dev, 0xf6b0, 0x00);
@@ -202,18 +235,6 @@ void hsdaoh_ms_enable_transparent_mode(hsdaoh_dev_t *dev)
 
 	/* disable chroma interpolation */
 	hsdaoh_ms_write_register(dev, 0xf600, 0x80);
-}
-
-int hsdaoh_i2c_write_fn(void *dev, uint8_t addr, uint8_t *buf, uint16_t len)
-{
-
-	return -1;
-}
-
-int hsdaoh_i2c_read_fn(void *dev, uint8_t addr, uint8_t *buf, uint16_t len)
-{
-
-	return -1;
 }
 
 int hsdaoh_get_message_string(int msg_type, int msg, void *additional, char *output)
@@ -327,19 +348,6 @@ int hsdaoh_get_usb_strings(hsdaoh_dev_t *dev, char *manufact, char *product,
 	return 0;
 }
 
-int hsdaoh_set_sample_rate(hsdaoh_dev_t *dev, uint32_t samp_rate, bool ext_clock)
-{
-	return 0;
-}
-
-uint32_t hsdaoh_get_sample_rate(hsdaoh_dev_t *dev)
-{
-	if (!dev)
-		return 0;
-
-	return dev->rate;
-}
-
 static hsdaoh_adapter_t *find_known_device(uint16_t vid, uint16_t pid)
 {
 	unsigned int i;
@@ -435,17 +443,12 @@ int hsdaoh_clear_endpoint_halt(hsdaoh_dev_t *dev)
 	int r;
 
 	if (libusb_kernel_driver_active(dev->devh, 1) == 1) {
+		dev->driver_active = true;
 		r = libusb_detach_kernel_driver(dev->devh, 1);
 		if (r < 0) {
 			dev->msg_cb(HSDAOH_MSG_ERROR, HSDAOH_ERROR_KERNEL_UVC_DRIVER_DETACH_FAILED , &r, dev->msg_cb_ctx);
 			return r;
 		}
-	}
-
-	r = libusb_claim_interface(dev->devh, dev->hid_interface);
-	if (r < 0) {
-		dev->msg_cb(HSDAOH_MSG_ERROR, HSDAOH_ERROR_USB_CLAIM_INTERFACE_HID_FAILED, &r, dev->msg_cb_ctx);
-		return r;
 	}
 
 	r = libusb_claim_interface(dev->devh, 1);
@@ -467,8 +470,7 @@ int _hsdaoh_open_uvc_device(hsdaoh_dev_t *dev)
 {
 	uvc_error_t r;
 
-	/* Initialize UVC context. In theory it should be possible to re-use our
-	 * libusb context, but for whatever reason that does not work */
+	/* Initialize UVC context */
 	r = uvc_init(&dev->uvc_ctx, NULL);
 
 	if (r < 0) {
@@ -486,9 +488,8 @@ int _hsdaoh_open_uvc_device(hsdaoh_dev_t *dev)
 		/* Try to open the device: requires exclusive access */
 		r = uvc_open(dev->uvc_dev, &dev->uvc_devh);
 
-		if (r < 0) {
+		if (r < 0)
 			uvc_perror(r, "uvc_open"); /* unable to open device */
-		}
 	}
 
 	return (int)r;
@@ -523,14 +524,9 @@ int hsdaoh_open_msg_cb(hsdaoh_dev_t **out_dev, uint32_t index, hsdaoh_message_cb
 		return -1;
 	}
 
+
 	dev->msg_cb = cb;
 	dev->msg_cb_ctx = ctx;
-
-#if LIBUSB_API_VERSION >= 0x01000106
-	libusb_set_option(dev->ctx, LIBUSB_OPTION_LOG_LEVEL, 3);
-#else
-	libusb_set_debug(dev->ctx, 3);
-#endif
 
 	dev->dev_lost = 1;
 
@@ -551,26 +547,33 @@ int hsdaoh_open_msg_cb(hsdaoh_dev_t **out_dev, uint32_t index, hsdaoh_message_cb
 		device = NULL;
 	}
 
+	dev->vid = dd.idVendor;
+	dev->pid = dd.idProduct;
+
+	libusb_free_device_list(list, 1);
+	libusb_exit(dev->ctx);
+
 	if (!device) {
 		r = -1;
 		goto err;
 	}
 
-	dev->vid = dd.idVendor;
-	dev->pid = dd.idProduct;
-
-	r = libusb_open(device, &dev->devh);
-	libusb_free_device_list(list, 1);
+	r = _hsdaoh_open_uvc_device(dev);
 	if (r < 0) {
-		dev->msg_cb(HSDAOH_MSG_ERROR, HSDAOH_ERROR_USB_OPEN_FAILED, &r, dev->msg_cb_ctx);
-		if(r == LIBUSB_ERROR_ACCESS)
+		if (r == LIBUSB_ERROR_ACCESS)
 			dev->msg_cb(HSDAOH_MSG_ERROR, HSDAOH_ERROR_USB_ACCESS, NULL, dev->msg_cb_ctx);
+		goto err;
+	}
+
+	dev->devh = uvc_get_libusb_handle(dev->uvc_devh);
+	if (!dev->devh) {
+		fprintf(stderr, "Failed to get libusb device handle\n");
 		goto err;
 	}
 
 	dev->hid_interface = 4;
 	if (libusb_kernel_driver_active(dev->devh, dev->hid_interface) == 1) {
-
+		dev->driver_active = true;
 		r = libusb_detach_kernel_driver(dev->devh, dev->hid_interface);
 		if (r < 0) {
 			dev->msg_cb(HSDAOH_MSG_ERROR, HSDAOH_ERROR_KERNEL_HID_DRIVER_DETACH_FAILED, &r, dev->msg_cb_ctx);
@@ -578,13 +581,15 @@ int hsdaoh_open_msg_cb(hsdaoh_dev_t **out_dev, uint32_t index, hsdaoh_message_cb
 		}
 	}
 
+	r = libusb_claim_interface(dev->devh, dev->hid_interface);
+	if (r < 0) {
+		fprintf(stderr, "usb_claim_interface hid error %d\n", r);
+		return r;
+	}
+
 	if (hsdaoh_clear_endpoint_halt(dev) < 0)
 		goto err;
 
-	_hsdaoh_open_uvc_device(dev);
-
-
-	//dev->rate = DEFAULT_SAMPLERATE;
 	dev->dev_lost = 0;
 
 found:
@@ -592,12 +597,8 @@ found:
 
 	return 0;
 err:
-	if (dev) {
-		if (dev->ctx)
-			libusb_exit(dev->ctx);
-
+	if (dev)
 		free(dev);
-	}
 
 	return r;
 }
@@ -610,21 +611,17 @@ int hsdaoh_close(hsdaoh_dev_t *dev)
 	if (HSDAOH_INACTIVE != dev->async_status)
 		uvc_stop_streaming(dev->uvc_devh);
 
+	libusb_release_interface(dev->devh, dev->hid_interface);
+
+	if (dev->driver_active) {
+		if (libusb_attach_kernel_driver(dev->devh, 1) && libusb_attach_kernel_driver(dev->devh, 4))
+			dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_ERROR_KERNEL_DRIVER_REATTACH_FAILED, NULL, dev->msg_cb_ctx);
+	}
 
 	uvc_close(dev->uvc_devh);
 	uvc_unref_device(dev->uvc_dev);
 	uvc_exit(dev->uvc_ctx);
 
-	libusb_release_interface(dev->devh, dev->hid_interface);
-
-	//TODO: only re-attach kernel driver if it was attached previously
-	if (!libusb_attach_kernel_driver(dev->devh, 4))
-			dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_INFO_KERNEL_REATTACH_DRIVER, NULL, dev->msg_cb_ctx);
-	else
-			dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_ERROR_KERNEL_DRIVER_REATTACH_FAILED, NULL, dev->msg_cb_ctx);
-
-	libusb_close(dev->devh);
-	libusb_exit(dev->ctx);
 	free(dev);
 
 	return 0;
@@ -666,52 +663,76 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 	metadata_t meta;
 	hsdaoh_extract_metadata(data, &meta, dev->width);
 
-	if (meta.magic != 0xda7acab1)
+	if (le32toh(meta.magic) != 0xda7acab1) {
+		if (dev->stream_synced)
+			fprintf(stderr, "Lost sync to HDMI input stream\n");
+
+		dev->stream_synced = false;
 		return;
+	}
 
 	/* drop duplicated frames */
 	if (meta.framecounter == dev->last_frame_cnt)
 		return;
 
-	if (dev->stream_synced) {
-		if (meta.framecounter != ((dev->last_frame_cnt + 1) & 0xffff)) {
+	if (meta.framecounter != ((dev->last_frame_cnt + 1) & 0xffff)) {
+		dev->in_order_cnt = 0;
+		if (dev->stream_synced)
 			msg_add[0] = meta.framecounter;
 			msg_add[1] = ((dev->last_frame_cnt + 1) & 0xffff);
 			dev->msg_cb(HSDAOH_MSG_WARNING, HSDAOH_WARNING_MISSED_FRAME, msg_add, dev->msg_cb_ctx);
-		}
-	}
+	} else
+		dev->in_order_cnt++;
 
 	dev->last_frame_cnt = meta.framecounter;
-
 	int frame_errors = 0;
 
 	for (unsigned int i = 0; i < dev->height; i++) {
-		uint8_t *line_dat = data + (dev->width * 2 * i);
+		uint8_t *line_dat = data + (dev->width * sizeof(uint16_t) * i);
 
 		/* extract number of payload words from reserved field at end of line */
-		uint16_t payload_len = (line_dat[dev->width*2-1] << 8) | line_dat[dev->width*2-2];
+		uint16_t payload_len = le16toh(((uint16_t *)line_dat)[dev->width - 1]);
+		uint16_t crc = le16toh(((uint16_t *)line_dat)[dev->width - 2]);
+		uint16_t stream_id = le16toh(((uint16_t *)line_dat)[dev->width - 3]);
 
 		/* we only use 12 bits, the upper 4 bits are reserved for the metadata */
 		payload_len &= 0x0fff;
 
 		if (payload_len > dev->width-1) {
-			dev->msg_cb(HSDAOH_MSG_WARNING, HSDAOH_WARNING_INVALID_PAYLOAD_LENGTH, &payload_len, dev->msg_cb_ctx);
+			if (dev->stream_synced)
+				dev->msg_cb(HSDAOH_MSG_WARNING, HSDAOH_WARNING_INVALID_PAYLOAD_LENGTH, &payload_len, dev->msg_cb_ctx);
 
 			/* discard frame */
 			return;
 		}
 
-		uint16_t idle_len = (dev->width-1) - payload_len;
-		frame_errors += hsdaoh_check_idle_cnt(dev, (uint16_t *)line_dat + payload_len, idle_len);
+		if (meta.crc_config == CRC_NONE) {
+			uint16_t idle_len = (dev->width-1) - payload_len;
+			frame_errors += hsdaoh_check_idle_cnt(dev, (uint16_t *)line_dat + payload_len, idle_len);
+		} else if ((meta.crc_config == CRC16_1_LINE) || (meta.crc_config == CRC16_2_LINE)) {
+			uint16_t expected_crc = (meta.crc_config == CRC16_1_LINE) ? dev->last_crc[0] : dev->last_crc[1];
+
+			if ((crc != expected_crc) && dev->stream_synced)
+				frame_errors++;
+
+			dev->last_crc[1] = dev->last_crc[0];
+			dev->last_crc[0] = crc16_ccitt(line_dat, dev->width * sizeof(uint16_t));
+		}
 
 		if (payload_len > 0)
 			memmove(data + frame_payload_bytes, line_dat, payload_len * sizeof(uint16_t));
 
-		frame_payload_bytes += payload_len*2;
+		frame_payload_bytes += payload_len * sizeof(uint16_t);
 	}
 
-	if (dev->cb)
-		dev->cb(data, frame_payload_bytes, meta.pack_state, dev->cb_ctx);
+	hsdaoh_data_info_t data_info;
+	data_info.stream_id = 0;
+	data_info.buf = (uint8_t *)data;
+	data_info.len = frame_payload_bytes;
+	data_info.ctx = dev->cb_ctx;
+
+	if (dev->cb && dev->stream_synced)
+		dev->cb(&data_info);
 
 	if (frame_errors && dev->stream_synced) {
 		msg_add[0] = frame_errors;
@@ -721,7 +742,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 	} else
 		dev->frames_since_error++;
 
-	if (!dev->stream_synced) {
+	if (!dev->stream_synced && !frame_errors && (dev->in_order_cnt > 4)) {
 		dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_INFO_SYNCRONIZED_HDMI_INPUT_STREAM, NULL, dev->msg_cb_ctx);
 		dev->stream_synced = true;
 	}
@@ -785,14 +806,11 @@ int hsdaoh_start_stream(hsdaoh_dev_t *dev, hsdaoh_read_cb_t cb, void *ctx)
 		uvc_perror(res, "get_mode"); /* device doesn't provide a matching stream */
 	} else {
 		/* start the UVC stream */
-		dev->discard_start_frames = 60;
+		dev->discard_start_frames = 30;
 		res = uvc_start_streaming(dev->uvc_devh, &ctrl, _uvc_callback, (void *)dev, 0);
 
-		if (res < 0) {
+		if (res < 0)
 			uvc_perror(res, "start_streaming"); /* unable to start stream */
-		} else {
-			dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_INFO_START_STREAMING, NULL, dev->msg_cb_ctx);
-		}
 	}
 
 	return r;
@@ -810,17 +828,9 @@ int hsdaoh_stop_stream(hsdaoh_dev_t *dev)
 
 		/* End the stream. Blocks until last callback is serviced */
 		uvc_stop_streaming(dev->uvc_devh);
-		dev->msg_cb(HSDAOH_MSG_INFO, HSDAOH_INFO_STOP_STREAMING, NULL, dev->msg_cb_ctx);
 
 		return 0;
 	}
 
-	/* if called while in pending state, change the state forcefully */
-#if 0
-	if (HSDAOH_INACTIVE != dev->async_status) {
-		dev->async_status = HSDAOH_INACTIVE;
-		return 0;
-	}
-#endif
 	return -2;
 }

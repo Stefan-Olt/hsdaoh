@@ -43,6 +43,7 @@
 #else
 #include <windows.h>
 #include "getopt/getopt.h"
+#define usleep(t) Sleep((t)/1000)
 #endif
 
 #include "hsdaoh.h"
@@ -85,6 +86,7 @@ void usage(void)
 		"hsdaoh_test, a test tool for hsdaoh\n\n"
 		"Usage:\n"
 		"\t[-d device_index (default: 0)]\n"
+		"\t[-s expected samplerate (default: 30 MHz)]\n"
 		"\t[-p[seconds] enable PPM error measurement (default: 10 seconds)]\n");
 	exit(1);
 }
@@ -219,9 +221,12 @@ static void ppm_test(uint32_t len)
 }
 
 uint16_t last_value = 0;
-
-static void hsdaoh_callback(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx)
+static void hsdaoh_callback(hsdaoh_data_info_t *data_info)
 {
+	unsigned char *buf = data_info->buf;
+	uint32_t len = data_info->len;
+	void *ctx = data_info->ctx;
+
 	/* verify the counter value */
 	uint16_t *cnt = (uint16_t *)buf;
 	int n = len / sizeof(uint16_t);
@@ -243,7 +248,7 @@ int main(int argc, char **argv)
 	int n_read, r, opt, i;
 	int dev_index = 0;
 
-	while ((opt = getopt(argc, argv, "d:s:p:he")) != -1) {
+	while ((opt = getopt(argc, argv, "d:s:p:h")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = (uint32_t)atoi(optarg);
@@ -262,9 +267,8 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (dev_index < 0) {
+	if (dev_index < 0)
 		exit(1);
-	}
 
 	r = hsdaoh_open(&dev, (uint32_t)dev_index);
 	if (r < 0) {
@@ -288,10 +292,8 @@ int main(int argc, char **argv)
 
 	r = hsdaoh_start_stream(dev, hsdaoh_callback, NULL);
 
-
-	while (!do_exit) {
+	while (!do_exit)
 		usleep(50000);
-	}
 
 	if (do_exit)
 		fprintf(stderr, "\nUser cancel, exiting...\n");

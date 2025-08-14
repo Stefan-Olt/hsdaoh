@@ -34,6 +34,14 @@ extern "C" {
 #include <stdbool.h>
 #include <hsdaoh_export.h>
 
+typedef struct hsdaoh_data_info {
+	void *ctx;
+	unsigned char *buf;
+	uint32_t len;			/* buffer length */
+	uint16_t stream_id;
+	bool device_error;		/* device error happened, terminate application */
+} hsdaoh_data_info_t;
+
 typedef struct hsdaoh_dev hsdaoh_dev_t;
 
 /** HSDAOH message types
@@ -158,28 +166,10 @@ HSDAOH_API int hsdaoh_close(hsdaoh_dev_t *dev);
 HSDAOH_API int hsdaoh_get_usb_strings(hsdaoh_dev_t *dev, char *manufact,
 				      char *product, char *serial);
 
-/*!
- * Set the sample rate for the device
- *
- * \param dev the device handle given by hsdaoh_open()
- * \param samp_rate the sample rate to be set
- * \param ext_clock if true, use the IFCLK input insteafd of internal clock source
- *		    if a Si5351 is connected, it will be configured
- * \return 0 on success, -EINVAL on invalid rate
- */
-HSDAOH_API int hsdaoh_set_sample_rate(hsdaoh_dev_t *dev, uint32_t rate, bool ext_clock);
-
-/*!
- * Get actual sample rate the device is configured to.
- *
- * \param dev the device handle given by hsdaoh_open()
- * \return 0 on error, sample rate in Hz otherwise
- */
-HSDAOH_API uint32_t hsdaoh_get_sample_rate(hsdaoh_dev_t *dev);
-
 /* streaming functions */
 
-typedef void(*hsdaoh_read_cb_t)(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx);
+typedef void(*hsdaoh_read_cb_t)(hsdaoh_data_info_t *data_info);
+
 
 /*!
  * Start streaming data from the device.
@@ -201,6 +191,18 @@ HSDAOH_API int hsdaoh_start_stream(hsdaoh_dev_t *dev,
  */
 HSDAOH_API int hsdaoh_stop_stream(hsdaoh_dev_t *dev);
 
+/*!
+ * Write a datagram to the EDID RAM to control a downstream data source.
+ * A header with a sequence number and length is prepended to the mesage
+ * by the library.
+ *
+ * \param dev the device handle given by hsdaoh_open()
+ * \param data pointer to the datagram
+ * \param len length of the datagram, must not exceed 256-2 = 254 bytes
+ *            due to the prepended header.
+ * \return 0 on success
+ */
+HSDAOH_API int hsdaoh_write_edid_cmd_data(hsdaoh_dev_t *dev, uint8_t *data, uint8_t len);
 #ifdef __cplusplus
 }
 #endif

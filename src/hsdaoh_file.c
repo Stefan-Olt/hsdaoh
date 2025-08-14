@@ -32,11 +32,10 @@
 #include <io.h>
 #include <fcntl.h>
 #include "getopt/getopt.h"
+#define usleep(t) Sleep((t)/1000)
 #endif
 
 #include "hsdaoh.h"
-
-#define DEFAULT_SAMPLE_RATE		30000000
 
 static int do_exit = 0;
 static uint32_t bytes_to_read = 0;
@@ -47,7 +46,6 @@ void usage(void)
 	fprintf(stderr,
 		"hsdaoh_file, HDMI data acquisition tool\n\n"
 		"Usage:\n"
-		"\t[-s samplerate (default: 30 MHz)]\n"
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-p ppm_error (default: 0)]\n"
 		"\t[-n number of samples to read (default: 0, infinite)]\n"
@@ -77,8 +75,13 @@ static void sighandler(int signum)
 }
 #endif
 
-static void hsdaoh_callback(unsigned char *buf, uint32_t len, uint8_t pack_state, void *ctx)
+void hsdaoh_callback(hsdaoh_data_info_t *data_info)
 {
+	unsigned char *buf = data_info->buf;
+	uint32_t len = data_info->len;
+	void *ctx = data_info->ctx;
+	size_t nbytes = 0;
+
 	if (ctx) {
 		if (do_exit)
 			return;
@@ -89,9 +92,15 @@ static void hsdaoh_callback(unsigned char *buf, uint32_t len, uint8_t pack_state
 			hsdaoh_stop_stream(dev);
 		}
 
-		if (fwrite(buf, 1, len, (FILE*)ctx) != len) {
-			fprintf(stderr, "Short write, samples lost, exiting!\n");
-			hsdaoh_stop_stream(dev);
+		while (nbytes < len) {
+			nbytes += fwrite(buf + nbytes, 1, len - nbytes, (FILE*)ctx);
+
+			if (ferror((FILE*)ctx)) {
+				fprintf(stderr, "Error writing file, samples lost, exiting!\n");
+				hsdaoh_stop_stream(dev);
+				break;
+			}
+
 		}
 
 		if (bytes_to_read > 0)
@@ -110,15 +119,11 @@ int main(int argc, char **argv)
 	int ppm_error = 0;
 	FILE *file;
 	int dev_index = 0;
-	uint32_t samp_rate = DEFAULT_SAMPLE_RATE;
 
-	while ((opt = getopt(argc, argv, "d:s:n:p:d:")) != -1) {
+	while ((opt = getopt(argc, argv, "d:n:p:d:")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = (uint32_t)atoi(optarg);
-			break;
-		case 's':
-			samp_rate = (uint32_t)atof(optarg);
 			break;
 		case 'p':
 			ppm_error = atoi(optarg);
@@ -158,11 +163,6 @@ int main(int argc, char **argv)
 #else
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
-
-	/* Set the sample rate */
-	r = hsdaoh_set_sample_rate(dev, samp_rate, 0);
-	if (r < 0)
-		fprintf(stderr, "WARNING: Failed to set sample rate.\n");
 
 	if (strcmp(filename, "-") == 0) { /* Write samples to stdout */
 		file = stdout;
