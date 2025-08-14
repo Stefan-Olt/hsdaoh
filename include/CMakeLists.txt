@@ -23,5 +23,7 @@
 install(FILES
     hsdaoh.h
     hsdaoh_export.h
+    hsdaoh_raw.h
+    hsdaoh_crc.h
     DESTINATION include
 )

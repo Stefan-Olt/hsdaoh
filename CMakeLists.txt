@@ -138,6 +138,8 @@ endif (INSTALL_UDEV_RULES)
 install(FILES
     include/hsdaoh.h
     include/hsdaoh_export.h
+    include/hsdaoh_raw.h
+    include/hsdaoh_crc.h
     DESTINATION include
 )
 

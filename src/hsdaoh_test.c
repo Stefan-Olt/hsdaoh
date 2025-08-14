@@ -221,6 +221,7 @@ static void ppm_test(uint32_t len)
 }
 
 uint16_t last_value = 0;
+
 static void hsdaoh_callback(hsdaoh_data_info_t *data_info)
 {
 	unsigned char *buf = data_info->buf;

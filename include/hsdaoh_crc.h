@@ -1,5 +1,9 @@
-#ifndef __CRC_H
-#define __CRC_H
+#ifndef __HSDAOH_CRC_H
+#define __HSDAOH_CRC_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* CRC16 CCIT 'false' table, similar to what can be found in the Kernel */
 static const uint16_t ccitt_hash[] = {
@@ -37,7 +41,7 @@ static const uint16_t ccitt_hash[] = {
 	0x6e17,0x7e36,0x4e55,0x5e74,0x2e93,0x3eb2,0x0ed1,0x1ef0,
 };
 
-uint16_t crc16_ccitt(const uint8_t* buffer, size_t size)
+static inline uint16_t crc16_ccitt(const uint8_t* buffer, size_t size)
 {
 	uint16_t crc = 0xffff;
 	while (size-- > 0)
@@ -45,4 +49,9 @@ uint16_t crc16_ccitt(const uint8_t* buffer, size_t size)
 
 	return crc;
 }
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif
