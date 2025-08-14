@@ -32,7 +32,13 @@
 #include <stdarg.h>
 #ifndef _WIN32
 #include <unistd.h>
+#if defined(__APPLE__) || defined(__MACH__)
+#include <machine/endian.h>
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
+#include <sys/endian.h>
+#else
 #include <endian.h>
+#endif
 #else
 #include <windows.h>
 #define usleep(t) Sleep((t)/1000)
