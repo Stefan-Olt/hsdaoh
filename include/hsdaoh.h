@@ -34,9 +34,18 @@ extern "C" {
 #include <stdbool.h>
 #include <hsdaoh_export.h>
 
+enum hsdaoh_msg_level {
+	INFO,			/* message that informs about normal opartion */
+	WARNING,		/* warning, may cause data loss/corruption */
+	ERROR,			/* error, data is lost/corrupted */
+	CRITICAL		/* critical error, capture cannot continue */
+};
+
 typedef struct hsdaoh_data_info {
 	void *ctx;
 	unsigned char *buf;
+	unsigned int width;
+	unsigned int height;
 	uint32_t len;			/* buffer length */
 	uint16_t stream_id;
 	bool device_error;		/* device error happened, terminate application */
@@ -44,57 +53,7 @@ typedef struct hsdaoh_data_info {
 
 typedef struct hsdaoh_dev hsdaoh_dev_t;
 
-/** HSDAOH message types
- */
-typedef enum hsdaoh_message_types {
-  HSDAOH_MSG_INFO = 0,
-  HSDAOH_MSG_WARNING = 1,
-  HSDAOH_MSG_ERROR = 2
-} hsdaoh_message_types_t;
-
-/** HSDAOH messages
- */
-typedef enum hsdaoh_messages {
-  HSDAOH_SUCCESS = 0,
-  /** errors **/
-  HSDAOH_ERROR_KERNEL_UVC_DRIVER_DETACH_FAILED = -1,
-  HSDAOH_ERROR_KERNEL_HID_DRIVER_DETACH_FAILED = -2,
-  HSDAOH_ERROR_KERNEL_DRIVER_REATTACH_FAILED = -3,
-  HSDAOH_ERROR_USB_CLAIM_INTERFACE_HID_FAILED = -4,
-  HSDAOH_ERROR_USB_CLAIM_INTERFACE_1_FAILED = -5,
-  HSDAOH_ERROR_USB_CLEARING_ENDPOINT_HALT_FAILED = -6,
-  HSDAOH_ERROR_USB_OPEN_FAILED = -7,
-  HSDAOH_ERROR_USB_ACCESS = -8,
-  HSDAOH_ERROR_INCORRECT_FRAME_FORMAT = -9,
-  HSDAOH_ERROR_OTHER = -99,
-  /** warnings **/
-  HSDAOH_WARNING_MISSED_FRAME = 1,
-  HSDAOH_WARNING_INVALID_PAYLOAD_LENGTH = 2,
-  HSDAOH_WARNING_IDLE_COUNTER_ERROR = 3,
-  /** infos **/
-  HSDAOH_INFO_KERNEL_REATTACH_DRIVER = 100,
-  HSDAOH_INFO_SYNCRONIZED_HDMI_INPUT_STREAM = 101,
-  HSDAOH_INFO_START_STREAMING = 102,
-  HSDAOH_INFO_STOP_STREAMING = 103
-} hsdaoh_messages_t;
-
-typedef void(*hsdaoh_message_cb_t)(int msg_type, int msg, void *additional, void *ctx);
-
-/*!
- * Get string from message code.
- *
- * NOTE: The string argument must provide space for up to 256 bytes.
- *
- * \param msg_type the type of the message
- * \param mag the message code
- * \param additional data associated with the message
- * \param output string, may be NULL (then output to stderr)
- * \return 0 on success
- */
-HSDAOH_API int hsdaoh_get_message_string(int msg_type,
-					     int msg,
-					     void *additional,
-					     char *output);
+typedef void(*hsdaoh_message_cb_t)(void *ctx, enum hsdaoh_msg_level level, const char *format, ...);
 
 HSDAOH_API uint32_t hsdaoh_get_device_count(void);
 
@@ -117,23 +76,6 @@ HSDAOH_API int hsdaoh_get_device_usb_strings(uint32_t index,
 					     char *serial);
 
 /*!
- * Get USB strings.
- *
- * NOTE: The string arguments must provide space for up to 256 bytes.
- *
- * \param dev the device handle given by hsdaoh_open()
- * \param manufact manufacturer name, may be NULL
- * \param product product name, may be NULL
- * \param serial serial number, may be NULL
- * \return 0 on success
- */
-
-HSDAOH_API int hsdaoh_get_usb_strings(hsdaoh_dev_t *dev,
-					     char *manufact,
-					     char *product,
-					     char *serial);
-
-/*!
  * Get device index by USB serial string descriptor.
  *
  * \param serial serial string of the device
@@ -144,11 +86,15 @@ HSDAOH_API int hsdaoh_get_usb_strings(hsdaoh_dev_t *dev,
  */
 HSDAOH_API int hsdaoh_get_index_by_serial(const char *serial);
 
+HSDAOH_API int hsdaoh_alloc(hsdaoh_dev_t **dev);
+
 HSDAOH_API int hsdaoh_open(hsdaoh_dev_t **dev, uint32_t index);
 
-HSDAOH_API int hsdaoh_open_msg_cb(hsdaoh_dev_t **dev, uint32_t index, hsdaoh_message_cb_t cb, void *ctx);
+HSDAOH_API int hsdaoh_open2(hsdaoh_dev_t *dev, uint32_t index);
 
 HSDAOH_API int hsdaoh_close(hsdaoh_dev_t *dev);
+
+HSDAOH_API void hsdaoh_set_msg_callback(hsdaoh_dev_t *dev, hsdaoh_message_cb_t cb, void *ctx);
 
 /* configuration functions */
 
@@ -169,7 +115,6 @@ HSDAOH_API int hsdaoh_get_usb_strings(hsdaoh_dev_t *dev, char *manufact,
 /* streaming functions */
 
 typedef void(*hsdaoh_read_cb_t)(hsdaoh_data_info_t *data_info);
-
 
 /*!
  * Start streaming data from the device.
