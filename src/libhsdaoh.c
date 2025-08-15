@@ -376,20 +376,20 @@ int hsdaoh_clear_endpoint_halt(hsdaoh_dev_t *dev)
 		dev->driver_active = true;
 		r = libusb_detach_kernel_driver(dev->devh, 1);
 		if (r < 0) {
-			dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "Failed to detach UVC Kernel driver: %d\n", r);
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "Failed to detach UVC Kernel driver: %d\n", r);
 			return r;
 		}
 	}
 
 	r = libusb_claim_interface(dev->devh, 1);
 	if (r < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "usb_claim_interface 1 error %d\n", r);
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "usb_claim_interface 1 error %d\n", r);
 		return r;
 	}
 
 	r = libusb_clear_halt(dev->devh, LIBUSB_ENDPOINT_IN + 3);
 	if (r < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "error clearing endpoint halt %d\n", r);
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "error clearing endpoint halt %d\n", r);
 		return r;
 	}
 
@@ -404,7 +404,7 @@ int _hsdaoh_open_uvc_device(hsdaoh_dev_t *dev)
 	r = uvc_init(&dev->uvc_ctx, NULL);
 
 	if (r < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "uvc_init: %s\n", uvc_strerror(r));
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "uvc_init: %s\n", uvc_strerror(r));
 		return r;
 	}
 
@@ -412,14 +412,14 @@ int _hsdaoh_open_uvc_device(hsdaoh_dev_t *dev)
 	r = uvc_find_device(dev->uvc_ctx, &dev->uvc_dev, dev->vid, dev->pid, NULL);
 
 	if (r < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "uvc_find_device: %s\n", uvc_strerror(r)); /* no devices found */
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "uvc_find_device: %s\n", uvc_strerror(r)); /* no devices found */
 	} else {
 
 		/* Try to open the device: requires exclusive access */
 		r = uvc_open(dev->uvc_dev, &dev->uvc_devh);
 
 		if (r < 0)
-			dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "uvc_open: %s\n", uvc_strerror(r)); /* unable to open device */
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "uvc_open: %s\n", uvc_strerror(r)); /* unable to open device */
 	}
 
 	return (int)r;
@@ -491,14 +491,14 @@ int hsdaoh_open2(hsdaoh_dev_t *dev, uint32_t index)
 	r = _hsdaoh_open_uvc_device(dev);
 	if (r < 0) {
 		if (r == LIBUSB_ERROR_ACCESS)
-			dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "Please fix the device permissions, e.g. "
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "Please fix the device permissions, e.g. "
 			"by installing the udev rules file\n");
 		goto err;
 	}
 
 	dev->devh = uvc_get_libusb_handle(dev->uvc_devh);
 	if (!dev->devh) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "Failed to get libusb device handle\n");
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "Failed to get libusb device handle\n");
 		goto err;
 	}
 
@@ -507,14 +507,14 @@ int hsdaoh_open2(hsdaoh_dev_t *dev, uint32_t index)
 		dev->driver_active = true;
 		r = libusb_detach_kernel_driver(dev->devh, dev->hid_interface);
 		if (r < 0) {
-			dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "Failed to detach HID Kernel driver: %d\n", r);
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "Failed to detach HID Kernel driver: %d\n", r);
 			goto err;
 		}
 	}
 
 	r = libusb_claim_interface(dev->devh, dev->hid_interface);
 	if (r < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "usb_claim_interface hid error %d\n", r);
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "usb_claim_interface hid error %d\n", r);
 		return r;
 	}
 
@@ -571,7 +571,7 @@ int hsdaoh_close(hsdaoh_dev_t *dev)
 
 	if (dev->driver_active) {
 		if (libusb_attach_kernel_driver(dev->devh, 1) && libusb_attach_kernel_driver(dev->devh, 4))
-			dev->cb_msg(dev->cb_msg_ctx, ERROR, "Reattaching kernel driver failed!\n");
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "Reattaching kernel driver failed!\n");
 	}
 
 	uvc_close(dev->uvc_devh);
@@ -610,7 +610,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 
 	if (le32toh(meta.magic) != HSDAOH_MAGIC) {
 		if (dev->stream_synced)
-			dev->cb_msg(dev->cb_msg_ctx, ERROR, "Lost sync to HDMI input stream\n");
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "Lost sync to HDMI input stream\n");
 
 		dev->stream_synced = false;
 		return;
@@ -623,7 +623,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 	if (meta.framecounter != ((dev->last_frame_cnt + 1) & 0xffff)) {
 		dev->in_order_cnt = 0;
 		if (dev->stream_synced)
-			dev->cb_msg(dev->cb_msg_ctx, ERROR, "Missed at least one frame, fcnt %d, expected %d!\n",
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "Missed at least one frame, fcnt %d, expected %d!\n",
 				meta.framecounter, ((dev->last_frame_cnt + 1) & 0xffff));
 	} else
 		dev->in_order_cnt++;
@@ -649,7 +649,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 
 		if (payload_len > dev->width-1) {
 			if (dev->stream_synced)
-				dev->cb_msg(dev->cb_msg_ctx, ERROR, "Invalid payload length: %d\n", payload_len);
+				dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "Invalid payload length: %d\n", payload_len);
 
 			/* discard frame */
 			return;
@@ -691,13 +691,13 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 	}
 
 	if (frame_errors && dev->stream_synced) {
-		dev->cb_msg(dev->cb_msg_ctx, ERROR, "%d frame errors, %d frames since last error\n", frame_errors, dev->frames_since_error);
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "%d frame errors, %d frames since last error\n", frame_errors, dev->frames_since_error);
 		dev->frames_since_error = 0;
 	} else
 		dev->frames_since_error++;
 
 	if (!dev->stream_synced && !frame_errors && (dev->in_order_cnt > 4)) {
-		dev->cb_msg(dev->cb_msg_ctx, INFO, "Syncronized to HDMI input stream\n");
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_INFO, "Syncronized to HDMI input stream\n");
 		dev->stream_synced = true;
 	}
 }
@@ -707,7 +707,7 @@ void _uvc_callback(uvc_frame_t *frame, void *ptr)
 	hsdaoh_dev_t *dev = (hsdaoh_dev_t *)ptr;
 
 	if (frame->frame_format != UVC_COLOR_FORMAT_YUYV) {
-		dev->cb_msg(dev->cb_msg_ctx, ERROR, "Error: incorrect frame format!\n");
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_ERROR, "Error: incorrect frame format!\n");
 		return;
 	}
 
@@ -766,14 +766,14 @@ int hsdaoh_start_stream(hsdaoh_dev_t *dev, hsdaoh_read_cb_t cb, void *ctx)
 	res = uvc_get_stream_ctrl_format_size(dev->uvc_devh, &ctrl, frame_format, dev->width, dev->height, dev->fps);
 
 	if (res < 0) {
-		dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "get_mode: %s\n", uvc_strerror(res)); /* device doesn't provide a matching stream */
+		dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "get_mode: %s\n", uvc_strerror(res)); /* device doesn't provide a matching stream */
 	} else {
 		/* start the UVC stream */
 		dev->discard_start_frames = 30;
 		res = uvc_start_streaming(dev->uvc_devh, &ctrl, _uvc_callback, (void *)dev, 0);
 
 		if (res < 0)
-			dev->cb_msg(dev->cb_msg_ctx, CRITICAL, "start_streaming: %s\n", uvc_strerror(res)); /* unable to start stream */
+			dev->cb_msg(dev->cb_msg_ctx, HSDAOH_CRITICAL, "start_streaming: %s\n", uvc_strerror(res)); /* unable to start stream */
 	}
 
 	return r;

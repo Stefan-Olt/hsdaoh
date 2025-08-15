@@ -35,10 +35,10 @@ extern "C" {
 #include <hsdaoh_export.h>
 
 enum hsdaoh_msg_level {
-	INFO,			/* message that informs about normal opartion */
-	WARNING,		/* warning, may cause data loss/corruption */
-	ERROR,			/* error, data is lost/corrupted */
-	CRITICAL		/* critical error, capture cannot continue */
+	HSDAOH_INFO,		/* message that informs about normal opartion */
+	HSDAOH_WARNING,		/* warning, may cause data loss/corruption */
+	HSDAOH_ERROR,		/* error, data is lost/corrupted */
+	HSDAOH_CRITICAL		/* critical error, capture cannot continue */
 };
 
 typedef struct hsdaoh_data_info {
