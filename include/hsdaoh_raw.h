@@ -77,7 +77,7 @@ static inline void hsdaoh_extract_metadata(uint8_t *data, metadata_t *metadata, 
 		meta[j++] = (data[((i+1)*width*2) - 1] >> 4) | (data[((i+2)*width*2) - 1] & 0xf0);
 }
 
-HSDAOH_API int hsdaoh_check_idle_cnt(hsdaoh_dev_t *dev, uint16_t *buf, size_t length);
+HSDAOH_API int hsdaoh_check_idle_cnt(uint16_t *idle_cnt, uint16_t *buf, size_t length);
 
 HSDAOH_API void hsdaoh_raw_callback(hsdaoh_dev_t *dev, bool raw_cb);
 

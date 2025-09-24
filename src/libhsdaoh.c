@@ -588,7 +588,7 @@ int hsdaoh_close(hsdaoh_dev_t *dev)
 }
 
 /* callback for idle/filler data */
-int hsdaoh_check_idle_cnt(hsdaoh_dev_t *dev, uint16_t *buf, size_t length)
+int hsdaoh_check_idle_cnt(uint16_t *idle_cnt, uint16_t *buf, size_t length)
 {
 	int idle_counter_errors = 0;
 
@@ -596,10 +596,10 @@ int hsdaoh_check_idle_cnt(hsdaoh_dev_t *dev, uint16_t *buf, size_t length)
 		return 0;
 
 	for (unsigned int i = 0; i < length; i++) {
-		if (buf[i] != ((dev->idle_cnt+1) & 0xffff))
+		if (buf[i] != ((*idle_cnt+1) & 0xffff))
 			idle_counter_errors++;
 
-		dev->idle_cnt = buf[i];
+		*idle_cnt = buf[i];
 	}
 
 	return idle_counter_errors;
@@ -661,7 +661,7 @@ void hsdaoh_process_frame(hsdaoh_dev_t *dev, uint8_t *data, int size)
 
 		if (meta.crc_config == CRC_NONE) {
 			uint16_t idle_len = (dev->width-1) - payload_len - ((meta.flags & FLAG_STREAM_ID_PRESENT) ? 1 : 0);
-			frame_errors += hsdaoh_check_idle_cnt(dev, (uint16_t *)line_dat + payload_len, idle_len);
+			frame_errors += hsdaoh_check_idle_cnt(&dev->idle_cnt, (uint16_t *)line_dat + payload_len, idle_len);
 		} else if ((meta.crc_config == CRC16_1_LINE) || (meta.crc_config == CRC16_2_LINE)) {
 			uint16_t expected_crc = (meta.crc_config == CRC16_1_LINE) ? dev->last_crc[0] : dev->last_crc[1];
 
